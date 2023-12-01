@@ -17,5 +17,24 @@
         "baseUrl": "https://annas-archive.org"
       }
     ]
+  },
+  {
+    "name": "Libgen",
+    "pkg": "some.random.libgen",
+    "apk": "some.random.libgen.apk",
+    "lang": "all",
+    "code": 1,
+    "version": "1.1",
+    "nsfw": 0,
+    "hasReadme": 0,
+    "hasChangelog": 0,
+    "sources": [
+      {
+        "name": "Libgen",
+        "lang": "all",
+        "id": "0510365478052738285",
+        "baseUrl": "https://libgen.is"
+      }
+    ]
   }
 ]
