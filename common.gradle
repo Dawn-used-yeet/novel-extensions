@@ -1,0 +1,95 @@
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+android {
+    namespace 'some.random'
+    compileSdk 34
+
+    sourceSets {
+        main {
+            manifest.srcFile "AndroidManifest.xml"
+            java.srcDirs = ['java']
+            res.srcDirs = ['res']
+            assets.srcDirs = ['assets']
+        }
+        release {
+            manifest.srcFile "AndroidManifest.xml"
+        }
+        debug {
+            manifest.srcFile "AndroidManifest.xml"
+        }
+    }
+
+    defaultConfig {
+        applicationId "some.random"
+        minSdk 24
+        targetSdk 34
+        versionCode extVersionCode
+        versionName extVersionName
+        applicationIdSuffix "$extSuffix"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        manifestPlaceholders = [
+                appName : "$extName",
+        ]
+    }
+
+    signingConfigs {
+        release {
+            if (keystoreProperties) {
+                println("keystoreProperties: " + keystoreProperties)
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                v1SigningEnabled true
+                v2SigningEnabled true
+            }
+        }
+    }
+
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled = false
+            shrinkResources = false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    buildFeatures {
+        viewBinding false
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+        freeCompilerArgs = ["-Xcontext-receivers", "-Xmulti-platform"]
+    }
+}
+
+
+
+dependencies {
+    implementation project(':src:common')
+    implementation 'androidx.core:core-ktx:1.9.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.10.0'
+    testImplementation 'junit:junit:4.13.2'
+    implementation 'com.squareup.okhttp3:logging-interceptor:5.0.0-alpha.11'
+    implementation 'com.squareup.okhttp3:okhttp:5.0.0-alpha.11'
+    implementation 'com.squareup.okhttp3:okhttp-dnsoverhttps'
+    implementation 'org.jsoup:jsoup:1.15.4'
+    implementation 'com.github.inorichi.injekt:injekt-core:65b0440'
+    implementation 'com.github.Blatzar:NiceHttp:0.4.4'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+
+}
