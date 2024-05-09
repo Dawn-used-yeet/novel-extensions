@@ -143,7 +143,7 @@ class Libgen() : NovelInterface {
                         val links = response.document.select("table#main").first()?.getElementsByAttribute("href")?.first()?.attr("href")
                         //logger("Novel search extr: $links")
                         //if substring starts with /ads.php then add the url before it
-                        if (links?.startsWith("/ads.php") == true) listOf(url.substringBefore("ads.php") + links)
+                        if (links?.startsWith("/ads.php") == true || links?.startsWith("get.php") == true) listOf(url.substringBefore("ads.php") + links)
                         else listOf(links ?: "")
                     }
                     else -> {
