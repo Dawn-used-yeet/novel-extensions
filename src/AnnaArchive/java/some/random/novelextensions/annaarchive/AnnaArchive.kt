@@ -7,30 +7,11 @@ import com.lagradost.nicehttp.Requests
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 
-/* testing
-fun main(){
-    val anna = AnnaArchive()
-    val client = Requests()
-    //val search = anna.search("Alya Sometimes Hides Her feelings")
-    // launch a separate coroutine to perform the search
-    var book: Book? = null
-    CoroutineScope(Dispatchers.IO).launch {
-        //search = anna.search("Alya Sometimes Hides Her feelings", client)
-        book = anna.loadBook("https://annas-archive.org/md5/ad3abaa3b9bf331dd40ec523d6a2cce1", mapOf(), client)
-    }
-    // wait for the coroutine to finish
-    Thread.sleep(8000)
-    // print the results
-    book?.let{
-        println("search: $it")
-    }
-}*/
-
-@Suppress("unused")
-class AnnaArchive() : NovelInterface {
+class AnnaArchive : NovelInterface {
 
     val name = "Anna's Archive"
     val saveName = "anna"
@@ -38,151 +19,122 @@ class AnnaArchive() : NovelInterface {
     val volumeRegex = Regex("vol\\.? (\\d+(\\.\\d+)?)|volume (\\d+(\\.\\d+)?)", RegexOption.IGNORE_CASE)
     val defaultImage = "https://s4.anilist.co/file/anilistcdn/media/manga/cover/medium/default.jpg"
 
-
-
-    private fun parseShowResponse(it: Element?): ShowResponse? {
-        //logger("parseShowResponse called with element: ${it?.text()}")
-        it ?: return null
-        if (!it.select("div[class~=lg:text-xs]").text().contains("epub", ignoreCase = true)) {
+    private fun parseShowResponse(element: Element?): ShowResponse? {
+        element ?: return null
+        if (!element.select("div[class~=lg:text-xs]").text().contains("epub", ignoreCase = true)) {
             return null
         }
-        //logger("parseShowResponse called with element: ${it.text()}")
-        val name = it.selectFirst("h3")?.text() ?: ""
-        var img = it.selectFirst("img")?.attr("src") ?: ""
-        if(img=="") img = defaultImage
+        
+        val name = element.selectFirst("h3")?.text() ?: ""
+        var img = element.selectFirst("img")?.attr("src") ?: defaultImage
+        
         val extra = mapOf(
-            "0" to it.select("div.italic").text(),
-            "1" to it.select("div[class~=max-lg:text-xs]").text(),
-            "2" to it.select("div[class~=lg:text-xs]").text(),
+            "0" to element.select("div.italic").text(),
+            "1" to element.select("div[class~=max-lg:text-xs]").text(),
+            "2" to element.select("div[class~=lg:text-xs]").text()
         )
-        return ShowResponse(name, "$hostUrl${it.attr("href")}", img, extra = extra)
+        
+        return ShowResponse(name, "$hostUrl${element.attr("href")}", img, extra = extra)
     }
 
     override suspend fun search(query: String, client: Requests): List<ShowResponse> {
-        val q = query.substringAfter("!$").replace("-", " ") // (minus) - does not display records containing the words after
-        val vols1 = client.get("$hostUrl/search?ext=epub&q=$q")
+        val formattedQuery = query.substringAfter("!$").replace("-", " ")
+        val responseElements = client.get("$hostUrl/search?ext=epub&q=$formattedQuery")
             .document.getElementsByAttributeValueContaining("class", "h-[125]")
-        //logger("Novel search: $query, $q, ${vols1.size}")
-        val vols = vols1
-            .mapNotNull { div ->
-                val a = div.selectFirst("a") ?: Jsoup.parse(div.data())
-                parseShowResponse(a.selectFirst("a"))
-            }
-        //logger("Novel search: $query, $q, ${vols.size}")
-        return if(query.startsWith("!$")) vols.sortByVolume(q) else vols
+        
+        return responseElements.mapNotNull { div ->
+            val a = div.selectFirst("a") ?: Jsoup.parse(div.data())
+            parseShowResponse(a.selectFirst("a"))
+        }.let { results ->
+            if (query.startsWith("!$")) results.sortByVolume(formattedQuery) else results
+        }
     }
 
     override suspend fun loadBook(link: String, extra: Map<String, String>?, client: Requests): Book {
-        return client.get(link).document.selectFirst("main")!!.let {
-            val name = it.selectFirst("div.text-3xl")!!.text().substringBefore("\uD83D\uDD0D")
-            var img = it.selectFirst("img")?.attr("src") ?: ""
-            if(img=="") img = defaultImage
-            val description = it.selectFirst("div.js-md5-top-box-description")?.text()
-            val links = it.select("a.js-download-link")
-                .filter { element ->
-                    !element.text().contains("Fast") &&
-                            !element.attr("href").contains("onion") &&
-                            !element.attr("href").contains("/datasets") &&
-                            !element.attr("href").contains("1lib") &&
-                            !element.attr("href").contains("slow_download")
-                }.reversed() //libgen urls are faster
-                .flatMap { a ->
-                    LinkExtractor(a.attr("href"), client).extractLink() ?: emptyList()
-                }
-            //logger("Novel search: $name, $img, $description, $links")
+        return client.get(link).document.selectFirst("main")!!.let { mainElement ->
+            val name = mainElement.selectFirst("div.text-3xl")!!.text().substringBefore("\uD83D\uDD0D")
+            var img = mainElement.selectFirst("img")?.attr("src") ?: defaultImage
+            
+            val description = mainElement.selectFirst("div.js-md5-top-box-description")?.text()
+            val links = mainElement.select("a.js-download-link")
+                .filter { !it.text().contains("Fast") && !it.attr("href").containsAny(listOf("onion", "/datasets", "1lib", "slow_download")) }
+                .reversed()
+                .flatMap { LinkExtractor(it.attr("href"), client).extractLink() ?: emptyList() }
+
             Book(name, img, description, links)
         }
     }
+
     class LinkExtractor(private val url: String, private val client: Requests) {
         suspend fun extractLink(): List<String>? {
             return when {
-                isLibgenUrl(url) || isLibraryLolUrl(url) -> LibgenExtractor(url)
-                isSlowDownload(url) -> {
-                    try {
-                        val response = client.get("https://annas-archive.org$url")
-                        val links = response.document.select("a")?.mapNotNull { it.attr("href") }
-                        //logger("Novel search extr3: $links")
-                        links?.takeWhile { !it.contains("localhost") }
-                    } catch (e: Exception) {
-                        //logger("Error in isSlowDownload: ${e.message}")
-                        null // or handle the exception as needed
-                    }
-                }
-
+                isLibgenUrl(url) || isLibraryLolUrl(url) -> LibgenExtractor(url).extract()
+                isSlowDownload(url) -> fetchSlowDownloadLinks()
                 else -> listOf(url)
             }
         }
 
-        private fun isLibgenUrl(url: String): Boolean {
-            val a = url.contains("libgen")
-            //logger("Novel search isLibgenUrl: $url, $a")
-            return a
-        }
+        private fun isLibgenUrl(url: String) = url.contains("libgen")
+        private fun isLibraryLolUrl(url: String) = url.contains("library.lol")
+        private fun isSlowDownload(url: String) = url.contains("slow_download")
 
-        private fun isLibraryLolUrl(url: String): Boolean {
-            val a = url.contains("library.lol")
-            //logger("Novel search isLibraryLolUrl: $url, $a")
-            return a
-        }
-
-        private fun isSlowDownload(url: String): Boolean {
-            val a = url.contains("slow_download")
-            //logger("Novel search isSlowDownload: $url, $a")
-            return a
+        private suspend fun fetchSlowDownloadLinks(): List<String>? {
+            return try {
+                val response = client.get("$hostUrl$url")
+                response.document.select("a").mapNotNull { it.attr("href") }.takeWhile { !it.contains("localhost") }
+            } catch (e: Exception) {
+                null // Handle exceptions as needed
+            }
         }
 
         private suspend fun LibgenExtractor(url: String): List<String>? {
             return try {
                 when {
-                    url.contains("ads.php") -> {
-                        val response = client.get(url)
-                        val links = response.document.select("table#main").first()?.getElementsByAttribute("href")?.first()?.attr("href")
-                        //logger("Novel search extr: $links")
-                        //if substring starts with /ads.php then add the url before it
-                        if (links?.startsWith("/ads.php") == true || links?.startsWith("get.php") == true) listOf(url.substringBefore("ads.php") + links)
-                        else listOf(links ?: "")
-                    }
-                    else -> {
-                        val response = client.get(url)
-                        val links = response.document.selectFirst("div#download")?.select("a")?.mapNotNull { it.attr("href") }
-                        //logger("Novel search extr2: $links")
-                        links?.takeWhile { !it.contains("localhost") }
-                    }
+                    url.contains("ads.php") -> extractFromAdsPage(url)
+                    else -> extractFromDownloadPage(url)
                 }
             } catch (e: Exception) {
-                //logger("Error during Libgen extraction: ${e.message}")
-                null // or handle the exception as needed
+                null // Handle exceptions as needed
             }
         }
 
+        private suspend fun extractFromAdsPage(url: String): List<String>? {
+            val response = client.get(url)
+            val link = response.document.selectFirst("table#main a[href]")?.attr("href")
+            return if (link != null && (link.startsWith("/ads.php") || link.startsWith("get.php"))) {
+                listOf(url.substringBefore("ads.php") + link)
+            } else {
+                listOf(link ?: "")
+            }
+        }
 
+        private suspend fun extractFromDownloadPage(url: String): List<String>? {
+            val response = client.get(url)
+            return response.document.selectFirst("div#download a[href]")?.mapNotNull { it.attr("href") }
+                ?.takeWhile { !it.contains("localhost") }
+        }
     }
 
-    fun List<ShowResponse>.sortByVolume(query:String) : List<ShowResponse> {
-        val sorted = groupBy { res ->
-            val match = volumeRegex.find(res.name)?.groupValues
-                ?.firstOrNull { it.isNotEmpty() }
-                ?.substringAfter(" ")
-                ?.toDoubleOrNull() ?: Double.MAX_VALUE
-            match
+    private fun List<ShowResponse>.sortByVolume(query: String): List<ShowResponse> {
+        val groupedByVolume = groupBy { res ->
+            volumeRegex.find(res.name)?.groupValues?.firstOrNull { it.isNotEmpty() }?.substringAfter(" ")?.toDoubleOrNull() ?: Double.MAX_VALUE
         }.toSortedMap().values
 
-        val volumes = sorted.map { showList ->
-            val nonDefaultCoverShows = showList.filter { it.coverUrl.url != defaultImage }
-            val bestShow = nonDefaultCoverShows.firstOrNull { it.name.contains(query) }
-                ?: nonDefaultCoverShows.firstOrNull()
-                ?: showList.first()
-            bestShow
+        val volumes = groupedByVolume.map { showList ->
+            showList.filter { it.coverUrl.url != defaultImage }.firstOrNull { it.name.contains(query) } ?: showList.first()
         }
-        val remainingShows = sorted.flatten() - volumes.toSet()
 
-        return volumes + remainingShows
+        return volumes + groupedByVolume.flatten() - volumes.toSet()
     }
-
 }
 
 fun logger(msg: String) {
     println(msg)
 }
+
+private fun String.containsAny(substrings: List<String>): Boolean {
+    return substrings.any { this.contains(it) }
+}
+
 
 
